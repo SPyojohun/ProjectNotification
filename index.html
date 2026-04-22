@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a4d8c" />
+  <title>通知 | Notify Schedule</title>
+  <link rel="stylesheet" href="style.css" />
+   <link rel="icon" type="image" href="icon-512.png">
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Notify" />
+</head>
+<body>
+  <!-- ตัวอักษรญี่ปุ่นตกแต่งพื้นหลัง -->
+  <div class="deco-jp" aria-hidden="true">
+    <span class="jp jp1">あい</span>
+    <span class="jp jp2">それは〜</span>
+    <span class="jp jp3">ね？</span>
+    <span class="jp jp4">アニメ</span>
+    <span class="jp jp5">やった！</span>
+    <span class="jp jp6">なに？！</span>
+    <span class="jp jp7">忘れない</span>
+    <span class="jp jp8">スケジュール</span>
+  </div>
+
+  <!-- Header -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">ア</span>
+      <div class="brand-text">
+        <h1>Notify Board</h1>
+        <p>お知らせ・スケジュール</p>
+      </div>
+    </div>
+
+    <button id="bentoBtn" class="bento-btn" aria-label="เมนู">
+      <span></span><span></span><span></span>
+      <span></span><span></span><span></span>
+      <span></span><span></span><span></span>
+    </button>
+  </header>
+
+  <!-- Bento / Start menu -->
+  <div id="bentoMenu" class="bento-menu hidden">
+    <div class="bento-grid">
+      <button class="tile tile-lg" data-page="schedule">
+        <span class="tile-icon">📅</span>
+        <span class="tile-label">ตารางเวลา</span>
+        <span class="tile-sub">Schedule</span>
+      </button>
+      <button class="tile tile-md tile-accent" data-page="add">
+        <span class="tile-icon">➕</span>
+        <span class="tile-label">เพิ่มรายการ</span>
+        <span class="tile-sub">Add new</span>
+      </button>
+      <button class="tile tile-md tile-dark" data-page="manage">
+        <span class="tile-icon">⚙️</span>
+        <span class="tile-label">จัดการข้อมูล</span>
+        <span class="tile-sub">Manage</span>
+      </button>
+      <button class="tile tile-sm" id="askPermBtn">
+        <span class="tile-icon">🔔</span>
+        <span class="tile-label">เปิดแจ้งเตือน</span>
+      </button>
+      <button class="tile tile-sm tile-soft" id="exportBtn">
+        <span class="tile-icon">⬇️</span>
+        <span class="tile-label">Export JSON</span>
+      </button>
+      <button class="tile tile-sm tile-soft" id="importBtn">
+        <span class="tile-icon">⬆️</span>
+        <span class="tile-label">Import JSON</span>
+      </button>
+      <button class="tile tile-sm" id="installBtn" style="display:none;">
+        <span class="tile-icon">📲</span>
+        <span class="tile-label">ติดตั้งเป็นแอป</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ซ่อน input file สำหรับ import -->
+  <input type="file" id="importInput" accept="application/json,.json" hidden />
+
+  <main class="container">
+    <!-- หน้า 1 : ตาราง -->
+    <section id="page-schedule" class="page active">
+      <div class="page-head">
+        <h2>ตารางการแจ้งเตือน</h2>
+        <p class="muted">เรียงตามวันและเวลา · 時間順</p>
+      </div>
+      <div id="scheduleArea" class="day-groups"></div>
+      <div id="emptyState" class="empty hidden">
+        <div class="empty-jp">空</div>
+        <p>ยังไม่มีรายการ — ลองเพิ่มจากเมนู Bento ➕</p>
+      </div>
+    </section>
+
+    <!-- หน้า 2 : เพิ่ม -->
+    <section id="page-add" class="page">
+      <div class="page-head">
+        <h2>เพิ่มรายการแจ้งเตือน</h2>
+        <p class="muted">新規登録</p>
+      </div>
+      <form id="addForm" class="card form-card">
+        <label class="img-picker">
+          <input type="file" id="imgInput" accept="image/*" hidden />
+          <div id="imgPreview" class="img-preview">
+            <span>คลิกเพื่อเลือกรูป</span>
+          </div>
+        </label>
+
+        <div class="field">
+          <label for="nameInput">ชื่อรายการ</label>
+          <input type="text" id="nameInput" required placeholder="เช่น กินยา" />
+        </div>
+
+        <div class="row">
+          <div class="field">
+            <label for="dateInput">วันที่</label>
+            <input type="date" id="dateInput" required />
+          </div>
+          <div class="field">
+            <label for="timeInput">เวลา</label>
+            <input type="time" id="timeInput" required />
+          </div>
+        </div>
+
+        <button type="submit" class="btn-primary">บันทึก 保存</button>
+      </form>
+    </section>
+
+    <!-- หน้า 3 : จัดการ -->
+    <section id="page-manage" class="page">
+      <div class="page-head">
+        <h2>จัดการข้อมูล</h2>
+        <p class="muted">編集・削除</p>
+      </div>
+      <div id="manageList" class="manage-list"></div>
+    </section>
+  </main>
+
+  <!-- Edit modal -->
+  <div id="editModal" class="modal hidden">
+    <div class="modal-card">
+      <h3>แก้ไขรายการ</h3>
+      <label class="img-picker">
+        <input type="file" id="editImg" accept="image/*" hidden />
+        <div id="editImgPreview" class="img-preview small">
+          <span>เปลี่ยนรูป</span>
+        </div>
+      </label>
+      <div class="field">
+        <label>ชื่อ</label>
+        <input type="text" id="editName" />
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>วันที่</label>
+          <input type="date" id="editDate" />
+        </div>
+        <div class="field">
+          <label>เวลา</label>
+          <input type="time" id="editTime" />
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-ghost" id="cancelEdit">ยกเลิก</button>
+        <button class="btn-primary" id="saveEdit">บันทึก</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="script.js"></script>
+</body>
+</html>
