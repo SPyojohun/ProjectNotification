@@ -1,442 +1,323 @@
-/* =========================================================
- * Notify Board - script.js
- * เก็บข้อมูลใน localStorage เป็น JSON
- * รองรับ Notification API + Export/Import JSON + PWA
- * ========================================================= */
+/* ============================================================
+   Anime Notify — IndexedDB version
+   ============================================================ */
 
-const STORAGE_KEY = "notify_board_items_v1";
+// ---------- IndexedDB wrapper ----------
+const DB_NAME = 'AnimeNotifyDB';
+const DB_VERSION = 1;
+const STORE = 'items';
 
-/** @typedef {{id:string, name:string, date:string, time:string, image:string|null, notified?:boolean}} Item */
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE)) {
+        db.createObjectStore(STORE, { keyPath: 'id' });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
 
-// ---------- Storage ----------
-function loadItems() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch (e) {
-    console.error("โหลดข้อมูลล้มเหลว", e);
-    return [];
+async function dbGetAll() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readonly');
+    const req = tx.objectStore(STORE).getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function dbPut(item) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).put(item);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function dbDelete(id) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function dbClear() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// ---------- Helpers ----------
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+// คำนวณวันที่ครั้งถัดไป (สำหรับ repeat รายสัปดาห์)
+function nextOccurrence(item) {
+  const base = new Date(`${item.date}T${item.time}`);
+  if (!item.repeat) return base;
+
+  const now = new Date();
+  let next = new Date(base);
+  while (next.getTime() <= now.getTime()) {
+    next.setDate(next.getDate() + 7);
   }
+  return next;
 }
-function saveItems(items) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-}
-function uid() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-}
-
-let items = loadItems();
-let editingId = null;
-let editingImage = null;
-let newImage = null;
 
 // ---------- Page navigation ----------
-const pages = {
-  schedule: document.getElementById("page-schedule"),
-  add:      document.getElementById("page-add"),
-  manage:   document.getElementById("page-manage"),
-};
-function goPage(name) {
-  Object.values(pages).forEach(p => p.classList.remove("active"));
-  pages[name].classList.add("active");
-  if (name === "schedule") renderSchedule();
-  if (name === "manage")   renderManage();
-  closeBento();
-  window.scrollTo({ top: 0, behavior: "smooth" });
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const target = document.getElementById('page' + name.charAt(0).toUpperCase() + name.slice(1));
+  if (target) target.classList.add('active');
+  document.getElementById('bentoMenu').classList.add('hidden');
+  if (name === 'home') renderHome();
+  if (name === 'manage') renderManage();
 }
 
-// ---------- Bento menu ----------
-const bentoBtn  = document.getElementById("bentoBtn");
-const bentoMenu = document.getElementById("bentoMenu");
-function closeBento() { bentoMenu.classList.add("hidden"); }
-bentoBtn.addEventListener("click", (e) => {
+// ---------- Bento ----------
+const bentoBtn = document.getElementById('bentoBtn');
+const bentoMenu = document.getElementById('bentoMenu');
+bentoBtn.addEventListener('click', (e) => {
   e.stopPropagation();
-  bentoMenu.classList.toggle("hidden");
+  bentoMenu.classList.toggle('hidden');
 });
-document.addEventListener("click", (e) => {
-  if (!bentoMenu.contains(e.target) && e.target !== bentoBtn) closeBento();
+document.addEventListener('click', (e) => {
+  if (!bentoMenu.contains(e.target) && e.target !== bentoBtn) {
+    bentoMenu.classList.add('hidden');
+  }
 });
-bentoMenu.querySelectorAll("[data-page]").forEach(btn => {
-  btn.addEventListener("click", () => goPage(btn.dataset.page));
+document.querySelectorAll('.tile[data-page]').forEach(t => {
+  t.addEventListener('click', () => showPage(t.dataset.page));
 });
 
-// ---------- Notification permission ----------
-document.getElementById("askPermBtn").addEventListener("click", askNotificationPermission);
+// ---------- Render Home ----------
+async function renderHome() {
+  const items = await dbGetAll();
+  const grid = document.getElementById('cardGrid');
+  const empty = document.getElementById('emptyState');
 
-async function askNotificationPermission() {
-  if (!("Notification" in window)) {
-    toast("เบราว์เซอร์นี้ไม่รองรับการแจ้งเตือน");
+  if (items.length === 0) {
+    grid.innerHTML = '';
+    empty.classList.remove('hidden');
     return;
   }
-  if (Notification.permission === "granted") {
-    toast("เปิดการแจ้งเตือนอยู่แล้ว ✓");
-    return;
-  }
-  const result = await Notification.requestPermission();
-  if (result === "granted") {
-    toast("เปิดการแจ้งเตือนสำเร็จ 🔔");
-    new Notification("Notify Board", {
-      body: "พร้อมแจ้งเตือนตามเวลาที่คุณตั้งไว้ 📅",
-    });
-  } else {
-    toast("ไม่ได้รับอนุญาตให้แจ้งเตือน");
-  }
+  empty.classList.add('hidden');
+
+  // เรียงตามครั้งถัดไปที่จะฉาย
+  const sorted = items
+    .map(it => ({ ...it, _next: nextOccurrence(it) }))
+    .sort((a, b) => a._next - b._next);
+
+  grid.innerHTML = sorted.map(it => {
+    const next = it._next;
+    const dayStr = next.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'short' });
+    const timeStr = next.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+    const img = it.image
+      ? `<img class="card-img" src="${it.image}" alt="">`
+      : `<div class="card-img" style="display:flex;align-items:center;justify-content:center;font-size:3rem;color:var(--blue-300);font-family:'Hiragino Sans',serif">あ</div>`;
+    return `
+      <div class="card">
+        ${img}
+        <div class="card-body">
+          <div class="card-title">${escapeHtml(it.title)}</div>
+          <div class="card-meta">
+            <span>${dayStr}</span>
+            <span class="badge badge-time">${timeStr}</span>
+            ${it.repeat ? '<span class="badge badge-repeat">🔁 ทุกสัปดาห์</span>' : ''}
+          </div>
+          ${it.note ? `<div class="card-note">${escapeHtml(it.note)}</div>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
-window.addEventListener("load", () => {
-  if ("Notification" in window && Notification.permission === "default") {
-    setTimeout(() => Notification.requestPermission().catch(()=>{}), 1500);
-  }
-});
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]);
+}
 
-// ---------- Export JSON ----------
-document.getElementById("exportBtn").addEventListener("click", () => {
-  const blob = new Blob([JSON.stringify(items, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `notify-board-${new Date().toISOString().slice(0,10)}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-  toast("ส่งออกเรียบร้อย ✓");
-});
+// ---------- Add form ----------
+const imgInput = document.getElementById('imgInput');
+const imgPreview = document.getElementById('imgPreview');
+let imageDataUrl = '';
 
-// ---------- Import JSON ----------
-const importInput = document.getElementById("importInput");
-document.getElementById("importBtn").addEventListener("click", () => {
-  importInput.click();
-});
-importInput.addEventListener("change", (e) => {
-  const file = e.target.files[0];
+imgInput.addEventListener('change', () => {
+  const file = imgInput.files[0];
   if (!file) return;
   const reader = new FileReader();
   reader.onload = () => {
-    try {
-      const parsed = JSON.parse(reader.result);
-      if (!Array.isArray(parsed)) throw new Error("รูปแบบไฟล์ไม่ถูกต้อง");
-
-      // ถามผู้ใช้ว่าจะ "รวม" หรือ "แทนที่"
-      const mode = confirm(
-        `พบ ${parsed.length} รายการในไฟล์\n\n` +
-        `กด OK = รวมกับข้อมูลเดิม (Merge)\n` +
-        `กด Cancel = แทนที่ข้อมูลเดิมทั้งหมด (Replace)`
-      );
-
-      // validate และ normalize
-      const valid = parsed
-        .filter(it => it && it.name && it.date && it.time)
-        .map(it => ({
-          id: it.id || uid(),
-          name: String(it.name),
-          date: String(it.date),
-          time: String(it.time),
-          image: it.image || null,
-          notified: !!it.notified,
-        }));
-
-      if (mode) {
-        // merge: skip รายการที่ id ซ้ำ
-        const existingIds = new Set(items.map(i => i.id));
-        const toAdd = valid.filter(i => !existingIds.has(i.id));
-        items = [...items, ...toAdd];
-        toast(`นำเข้า ${toAdd.length} รายการใหม่ ✓`);
-      } else {
-        items = valid;
-        toast(`แทนที่ข้อมูลด้วย ${valid.length} รายการ ✓`);
-      }
-      saveItems(items);
-      renderSchedule();
-      renderManage();
-    } catch (err) {
-      console.error(err);
-      alert("อ่านไฟล์ไม่สำเร็จ: " + err.message);
-    } finally {
-      importInput.value = "";
-    }
+    imageDataUrl = reader.result;
+    imgPreview.src = imageDataUrl;
+    imgPreview.classList.remove('hidden');
   };
-  reader.readAsText(file);
+  reader.readAsDataURL(file);
 });
 
-// ---------- Image picker ----------
-function setupImagePicker(inputEl, previewEl, onChange) {
-  inputEl.addEventListener("change", (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      previewEl.style.backgroundImage = `url(${reader.result})`;
-      previewEl.classList.add("has-img");
-      onChange(reader.result);
-    };
-    reader.readAsDataURL(file);
-  });
-}
-const imgInput = document.getElementById("imgInput");
-const imgPreview = document.getElementById("imgPreview");
-setupImagePicker(imgInput, imgPreview, (data) => { newImage = data; });
-
-const editImg = document.getElementById("editImg");
-const editImgPreview = document.getElementById("editImgPreview");
-setupImagePicker(editImg, editImgPreview, (data) => { editingImage = data; });
-
-// ---------- Add form ----------
-document.getElementById("addForm").addEventListener("submit", (e) => {
+document.getElementById('addForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const name = document.getElementById("nameInput").value.trim();
-  const date = document.getElementById("dateInput").value;
-  const time = document.getElementById("timeInput").value;
-  if (!name || !date || !time) return;
-
-  /** @type {Item} */
   const item = {
     id: uid(),
-    name, date, time,
-    image: newImage,
-    notified: false,
+    title: document.getElementById('titleInput').value.trim(),
+    date: document.getElementById('dateInput').value,
+    time: document.getElementById('timeInput').value,
+    repeat: document.getElementById('repeatInput').checked,
+    note: document.getElementById('noteInput').value.trim(),
+    image: imageDataUrl,
+    notifiedKey: '', // กันแจ้งเตือนซ้ำในรอบเดียวกัน
   };
-  items.push(item);
-  saveItems(items);
-  toast("บันทึกเรียบร้อย ✓");
-
+  await dbPut(item);
   e.target.reset();
-  imgPreview.style.backgroundImage = "";
-  imgPreview.classList.remove("has-img");
-  newImage = null;
-  goPage("schedule");
+  imgPreview.classList.add('hidden');
+  imageDataUrl = '';
+  document.getElementById('repeatInput').checked = true;
+  alert('บันทึกแล้ว ✓');
+  showPage('home');
 });
 
-// ---------- Render: schedule ----------
-function renderSchedule() {
-  const area = document.getElementById("scheduleArea");
-  const empty = document.getElementById("emptyState");
-  area.innerHTML = "";
-
+// ---------- Manage page ----------
+async function renderManage() {
+  const items = await dbGetAll();
+  const list = document.getElementById('manageList');
   if (items.length === 0) {
-    empty.classList.remove("hidden");
+    list.innerHTML = '<p style="text-align:center;color:var(--blue-700);padding:40px">ไม่มีรายการ</p>';
     return;
   }
-  empty.classList.add("hidden");
-
-  const groups = {};
-  items.forEach(it => {
-    (groups[it.date] = groups[it.date] || []).push(it);
-  });
-  const sortedDates = Object.keys(groups).sort();
-
-  const now = new Date();
-  const soonMs = 60 * 60 * 1000;
-
-  sortedDates.forEach(date => {
-    const list = groups[date].sort((a,b) => a.time.localeCompare(b.time));
-    const block = document.createElement("div");
-    block.className = "day-block";
-
-    const d = new Date(date + "T00:00:00");
-    const weekdayTH = ["อาทิตย์","จันทร์","อังคาร","พุธ","พฤหัสบดี","ศุกร์","เสาร์"][d.getDay()];
-    const weekdayJP = ["日","月","火","水","木","金","土"][d.getDay()];
-    const dateText = d.toLocaleDateString("th-TH", { day:"numeric", month:"long", year:"numeric" });
-
-    block.innerHTML = `
-      <div class="day-title">
-        <span class="date-main">${dateText} (${weekdayTH})</span>
-        <span class="date-jp">${weekdayJP}曜日</span>
-        <span class="date-count">${list.length} รายการ</span>
+  list.innerHTML = items.map(it => `
+    <div class="manage-item" data-id="${it.id}">
+      <img src="${it.image || ''}" alt="" onerror="this.style.background='var(--blue-100)'">
+      <div class="manage-info">
+        <h3>${escapeHtml(it.title)}</h3>
+        <small>${it.date} ${it.time} ${it.repeat ? '🔁' : ''}</small>
       </div>
-      <div class="cards-grid"></div>
-    `;
-    const grid = block.querySelector(".cards-grid");
+      <div class="manage-actions">
+        <button class="btn-icon" data-act="rename">✏️</button>
+        <button class="btn-icon" data-act="reimg">🖼️</button>
+        <button class="btn-icon danger" data-act="delete">🗑️</button>
+      </div>
+    </div>
+  `).join('');
 
-    list.forEach(it => {
-      const card = document.createElement("div");
-      card.className = "card";
-      const itemDate = new Date(`${it.date}T${it.time}`);
-      const diff = itemDate - now;
-      if (diff < -60000) card.classList.add("passed");
-      else if (diff <= soonMs && diff > -60000) card.classList.add("upcoming-soon");
-
-      const imgStyle = it.image ? `style="background-image:url(${it.image})"` : "";
-      const imgInner = it.image ? "" : "通知";
-
-      card.innerHTML = `
-        <div class="card-img" ${imgStyle}>${imgInner}</div>
-        <div class="card-body">
-          <h3 class="card-title">${escapeHtml(it.name)}</h3>
-          <span class="card-time">🕐 ${it.time} น.</span>
-        </div>
-      `;
-      grid.appendChild(card);
-    });
-
-    area.appendChild(block);
+  list.querySelectorAll('.manage-item').forEach(el => {
+    const id = el.dataset.id;
+    el.querySelector('[data-act="rename"]').onclick = async () => {
+      const items = await dbGetAll();
+      const it = items.find(x => x.id === id);
+      const name = prompt('ชื่อใหม่:', it.title);
+      if (name && name.trim()) { it.title = name.trim(); await dbPut(it); renderManage(); }
+    };
+    el.querySelector('[data-act="reimg"]').onclick = () => {
+      const f = document.createElement('input');
+      f.type = 'file'; f.accept = 'image/*';
+      f.onchange = async () => {
+        const file = f.files[0]; if (!file) return;
+        const r = new FileReader();
+        r.onload = async () => {
+          const items = await dbGetAll();
+          const it = items.find(x => x.id === id);
+          it.image = r.result; await dbPut(it); renderManage();
+        };
+        r.readAsDataURL(file);
+      };
+      f.click();
+    };
+    el.querySelector('[data-act="delete"]').onclick = async () => {
+      if (confirm('ลบรายการนี้?')) { await dbDelete(id); renderManage(); }
+    };
   });
 }
 
-// ---------- Render: manage ----------
-function renderManage() {
-  const list = document.getElementById("manageList");
-  list.innerHTML = "";
+// ---------- Export / Import ----------
+document.getElementById('exportBtn').onclick = async () => {
+  const items = await dbGetAll();
+  const blob = new Blob([JSON.stringify(items, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `anime-notify-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  bentoMenu.classList.add('hidden');
+};
 
-  if (items.length === 0) {
-    list.innerHTML = `<div class="empty"><div class="empty-jp">空</div><p>ยังไม่มีรายการให้จัดการ</p></div>`;
-    return;
+const importFile = document.getElementById('importFile');
+document.getElementById('importBtn').onclick = () => importFile.click();
+importFile.onchange = async () => {
+  const file = importFile.files[0]; if (!file) return;
+  const text = await file.text();
+  try {
+    const data = JSON.parse(text);
+    if (!Array.isArray(data)) throw new Error('รูปแบบไฟล์ไม่ถูกต้อง');
+    const mode = confirm('OK = รวมกับข้อมูลเดิม\nCancel = แทนที่ทั้งหมด') ? 'merge' : 'replace';
+    if (mode === 'replace') await dbClear();
+    const existing = await dbGetAll();
+    const existingIds = new Set(existing.map(x => x.id));
+    for (const it of data) {
+      if (!it.id) it.id = uid();
+      if (mode === 'merge' && existingIds.has(it.id)) continue;
+      await dbPut(it);
+    }
+    alert('นำเข้าสำเร็จ ✓');
+    renderHome();
+  } catch (err) {
+    alert('ไฟล์ไม่ถูกต้อง: ' + err.message);
   }
+  importFile.value = '';
+};
 
-  const sorted = [...items].sort((a,b) =>
-    (a.date + a.time).localeCompare(b.date + b.time)
-  );
+// ---------- Notification ----------
+document.getElementById('notifyBtn').onclick = async () => {
+  if (!('Notification' in window)) { alert('Browser ไม่รองรับการแจ้งเตือน'); return; }
+  const perm = await Notification.requestPermission();
+  alert(perm === 'granted' ? 'เปิดแจ้งเตือนแล้ว ✓' : 'ถูกปฏิเสธ');
+};
 
-  sorted.forEach(it => {
-    const row = document.createElement("div");
-    row.className = "manage-row";
-    const thumbStyle = it.image ? `style="background-image:url(${it.image})"` : "";
-    const thumbInner = it.image ? "" : "通";
-    row.innerHTML = `
-      <div class="thumb" ${thumbStyle}>${thumbInner}</div>
-      <div class="info">
-        <h4>${escapeHtml(it.name)}</h4>
-        <p>📅 ${it.date} · 🕐 ${it.time}</p>
-      </div>
-      <div class="actions">
-        <button class="btn-ghost" data-edit="${it.id}">แก้ไข</button>
-        <button class="btn-danger" data-del="${it.id}">ลบ</button>
-      </div>
-    `;
-    list.appendChild(row);
-  });
-
-  list.querySelectorAll("[data-del]").forEach(b => {
-    b.addEventListener("click", () => {
-      if (!confirm("ลบรายการนี้?")) return;
-      items = items.filter(i => i.id !== b.dataset.del);
-      saveItems(items);
-      renderManage();
-      toast("ลบแล้ว");
-    });
-  });
-  list.querySelectorAll("[data-edit]").forEach(b => {
-    b.addEventListener("click", () => openEdit(b.dataset.edit));
-  });
-}
-
-// ---------- Edit modal ----------
-const editModal = document.getElementById("editModal");
-function openEdit(id) {
-  const it = items.find(i => i.id === id);
-  if (!it) return;
-  editingId = id;
-  editingImage = it.image;
-  document.getElementById("editName").value = it.name;
-  document.getElementById("editDate").value = it.date;
-  document.getElementById("editTime").value = it.time;
-  if (it.image) {
-    editImgPreview.style.backgroundImage = `url(${it.image})`;
-    editImgPreview.classList.add("has-img");
-  } else {
-    editImgPreview.style.backgroundImage = "";
-    editImgPreview.classList.remove("has-img");
-  }
-  editModal.classList.remove("hidden");
-}
-document.getElementById("cancelEdit").addEventListener("click", () => {
-  editModal.classList.add("hidden");
-  editingId = null;
-});
-document.getElementById("saveEdit").addEventListener("click", () => {
-  const it = items.find(i => i.id === editingId);
-  if (!it) return;
-  it.name = document.getElementById("editName").value.trim() || it.name;
-  it.date = document.getElementById("editDate").value || it.date;
-  it.time = document.getElementById("editTime").value || it.time;
-  it.image = editingImage;
-  it.notified = false;
-  saveItems(items);
-  editModal.classList.add("hidden");
-  renderManage();
-  toast("อัปเดตแล้ว ✓");
-});
-
-// ---------- Notification scheduler ----------
-function checkNotifications() {
-  if (!("Notification" in window) || Notification.permission !== "granted") return;
-  const now = new Date();
-  let changed = false;
-  items.forEach(it => {
-    if (it.notified) return;
-    const t = new Date(`${it.date}T${it.time}`);
-    const diff = now - t;
-    if (diff >= 0 && diff < 5 * 60 * 1000) {
+// ตรวจทุก 30 วินาที — ส่งแจ้งเตือนเมื่อถึงเวลา (รองรับ repeat)
+async function checkNotifications() {
+  if (Notification.permission !== 'granted') return;
+  const items = await dbGetAll();
+  const now = Date.now();
+  for (const it of items) {
+    const next = nextOccurrence(it);
+    const diff = next.getTime() - now;
+    // ถึงเวลา (อยู่ในกรอบ -30วิ ถึง +30วิ) และยังไม่เคยแจ้งรอบนี้
+    const occurrenceKey = next.toISOString();
+    if (diff <= 30000 && diff >= -30000 && it.notifiedKey !== occurrenceKey) {
       try {
-        // ใช้ service worker notification ถ้ามี (เสถียรกว่าบนมือถือ)
-        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-          navigator.serviceWorker.ready.then(reg => {
-            reg.showNotification(it.name, {
-              body: `🔔 ถึงเวลา: ${it.name}`,
-              tag: it.id,
-              icon: it.image || "icon-192.png",
-              badge: "icon-192.png",
-            });
+        if (navigator.serviceWorker?.controller) {
+          const reg = await navigator.serviceWorker.ready;
+          reg.showNotification(it.title, {
+            body: it.note || 'ถึงเวลาแล้ว!',
+            icon: 'icon-192.png',
+            badge: 'icon-192.png',
+            tag: it.id,
           });
         } else {
-          new Notification(it.name, {
-            body: `🔔 ถึงเวลา: ${it.name}`,
-            tag: it.id,
-            icon: it.image || "icon-192.png",
-          });
+          new Notification(it.title, { body: it.note || 'ถึงเวลาแล้ว!', icon: 'icon-192.png' });
         }
-      } catch (e) { console.warn(e); }
-      it.notified = true;
-      changed = true;
+      } catch (e) { console.error(e); }
+      it.notifiedKey = occurrenceKey;
+      await dbPut(it);
     }
-  });
-  if (changed) saveItems(items);
+  }
 }
-setInterval(checkNotifications, 20 * 1000);
+setInterval(checkNotifications, 30000);
 checkNotifications();
 
-// ---------- PWA: register service worker + install prompt ----------
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch(err =>
-      console.warn("SW register failed:", err)
-    );
-  });
+// ---------- Service Worker ----------
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(console.error);
 }
 
-let deferredPrompt = null;
-const installBtn = document.getElementById("installBtn");
-window.addEventListener("beforeinstallprompt", (e) => {
-  e.preventDefault();
-  deferredPrompt = e;
-  installBtn.style.display = "";
-});
-installBtn.addEventListener("click", async () => {
-  if (!deferredPrompt) {
-    toast("เปิดเมนูเบราว์เซอร์ → 'Add to Home Screen'");
-    return;
-  }
-  deferredPrompt.prompt();
-  const { outcome } = await deferredPrompt.userChoice;
-  if (outcome === "accepted") toast("ติดตั้งสำเร็จ ✓");
-  deferredPrompt = null;
-  installBtn.style.display = "none";
-});
-
-// ---------- Helpers ----------
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({
-    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
-  }[c]));
-}
-let toastTimer;
-function toast(msg) {
-  const t = document.getElementById("toast");
-  t.textContent = msg;
-  t.classList.remove("hidden");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.add("hidden"), 2200);
-}
-
-// ---------- Init ----------
-const today = new Date().toISOString().slice(0,10);
-document.getElementById("dateInput").value = today;
-renderSchedule();
+// ---------- Initial render ----------
+renderHome();
