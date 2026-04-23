@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a4d8c" />
+  <title>アニメ通知 — Anime Notify</title>
+
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon-192.png" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- ตัวอักษรฮิรางานะตกแต่งพื้นหลัง -->
+  <div class="deco-layer" aria-hidden="true">
+    <span class="deco deco-1">あ</span>
+    <span class="deco deco-2">に</span>
+    <span class="deco deco-3">め</span>
+    <span class="deco deco-4">の</span>
+    <span class="deco deco-5">つ</span>
+    <span class="deco deco-6">う</span>
+    <span class="deco deco-7">ち</span>
+    <span class="deco deco-8">し</span>
+    <span class="deco deco-9">ら</span>
+    <span class="deco deco-10">せ</span>
+    <span class="deco deco-11">ま</span>
+    <span class="deco deco-12">い</span>
+    <span class="deco deco-13">しゅう</span>
+    <span class="deco deco-14">どようび</span>
+    <span class="deco deco-15">にちようび</span>
+    <span class="deco deco-16">わくわく</span>
+    <span class="deco deco-17">たのしい</span>
+    <span class="deco deco-18">きょう</span>
+  </div>
+
+  <!-- ปุ่ม Bento มุมขวาบน -->
+  <button id="bentoBtn" class="bento-btn" aria-label="เมนู">
+    <span></span><span></span><span></span>
+    <span></span><span></span><span></span>
+    <span></span><span></span><span></span>
+  </button>
+
+  <!-- เมนู Bento (Start menu style) -->
+  <div id="bentoMenu" class="bento-menu hidden">
+    <div class="bento-grid">
+      <button class="tile tile-home" data-page="home">
+        <div class="tile-icon">📅</div>
+        <div class="tile-label">หน้าหลัก</div>
+      </button>
+      <button class="tile tile-add" data-page="add">
+        <div class="tile-icon">➕</div>
+        <div class="tile-label">เพิ่ม</div>
+      </button>
+      <button class="tile tile-manage" data-page="manage">
+        <div class="tile-icon">⚙️</div>
+        <div class="tile-label">จัดการ</div>
+      </button>
+      <button class="tile tile-export" id="exportBtn">
+        <div class="tile-icon">⬇️</div>
+        <div class="tile-label">Export</div>
+      </button>
+      <button class="tile tile-import" id="importBtn">
+        <div class="tile-icon">⬆️</div>
+        <div class="tile-label">Import</div>
+      </button>
+      <button class="tile tile-notify" id="notifyBtn">
+        <div class="tile-icon">🔔</div>
+        <div class="tile-label">เปิดแจ้งเตือน</div>
+      </button>
+    </div>
+  </div>
+  <input type="file" id="importFile" accept="application/json" hidden />
+
+  <!-- หน้าหลัก: ตารางการ์ด -->
+  <main id="pageHome" class="page active">
+    <header class="page-header">
+      <h1>アニメスケジュール</h1>
+      <p class="subtitle">ตารางอนิเมะของฉัน</p>
+    </header>
+    <div id="cardGrid" class="card-grid"></div>
+    <div id="emptyState" class="empty-state hidden">
+      <div class="empty-icon">あ</div>
+      <p>ยังไม่มีรายการ — กดปุ่มมุมขวาบนเพื่อเพิ่ม</p>
+    </div>
+  </main>
+
+  <!-- หน้าเพิ่มรายการ -->
+  <main id="pageAdd" class="page">
+    <header class="page-header">
+      <h1>あたらしい</h1>
+      <p class="subtitle">เพิ่มรายการใหม่</p>
+    </header>
+    <form id="addForm" class="form-card">
+      <label>
+        <span>รูปภาพ (cover)</span>
+        <input type="file" id="imgInput" accept="image/*" />
+        <img id="imgPreview" class="img-preview hidden" alt="preview" />
+      </label>
+      <label>
+        <span>ชื่อเรื่อง</span>
+        <input type="text" id="titleInput" required placeholder="เช่น One Piece" />
+      </label>
+      <label>
+        <span>วันที่ฉาย</span>
+        <input type="date" id="dateInput" required />
+      </label>
+      <label>
+        <span>เวลา</span>
+        <input type="time" id="timeInput" required />
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" id="repeatInput" checked />
+        <span>🔁 ทำซ้ำทุกสัปดาห์ (เหมาะกับอนิเมะรายสัปดาห์)</span>
+      </label>
+      <label>
+        <span>หมายเหตุ (ไม่บังคับ)</span>
+        <textarea id="noteInput" rows="2" placeholder="เช่น ตอนที่ 1050"></textarea>
+      </label>
+      <button type="submit" class="btn-primary">บันทึก</button>
+    </form>
+  </main>
+
+  <!-- หน้าจัดการ -->
+  <main id="pageManage" class="page">
+    <header class="page-header">
+      <h1>かんり</h1>
+      <p class="subtitle">จัดการรายการ</p>
+    </header>
+    <div id="manageList" class="manage-list"></div>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
